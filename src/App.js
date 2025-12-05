@@ -66,7 +66,7 @@ try {
 // 2. もし上の設定がない場合（CodeSandboxなど）、以下の手動設定を使います
 if (!firebaseConfig) {
   firebaseConfig = {
-    // ↓↓↓ ここから下を自分のものに書き換える ↓↓↓
+    // ↓↓↓ 高橋さんの合鍵を入力済みです。そのまま使えます！ ↓↓↓
     apiKey: "AIzaSyD_0rHXb4wH9qQMtnTPdjoPapLijt0Zc8E",
     authDomain: "lantana-cafe-app.firebaseapp.com",
     projectId: "lantana-cafe-app",
@@ -564,7 +564,7 @@ export default function App() {
   };
   const aggregatedData = useMemo(() => getAggregatedData(), [orders, expenses]);
 
-  // --- Render Functions (Restored!) ---
+  // --- Render Functions (Complete) ---
 
   const renderExpenses = () => (
     <div className="max-w-2xl mx-auto space-y-6 pb-20">
