@@ -45,16 +45,17 @@ import {
   Edit2,
   X,
   RefreshCw,
+  Wallet,
+  PiggyBank,
+  Lock,
 } from "lucide-react";
 
 // --- Firebase Initialization ---
 
-// 1. まず、この画面（プレビュー）用の設定を読み込みます
 let firebaseConfig;
-let appId = "lantana";
+let appId = "lantana_store"; // 新しい保存場所を使用
 
 try {
-  // このチャット画面で動くための設定
   if (typeof __firebase_config !== "undefined") {
     firebaseConfig = JSON.parse(__firebase_config);
     if (typeof __app_id !== "undefined") appId = __app_id;
@@ -63,17 +64,15 @@ try {
   console.log("Environment config not found, using manual config.");
 }
 
-// 2. もし上の設定がない場合（CodeSandboxなど）、以下の手動設定を使います
+// 手動設定（CodeSandbox用）
 if (!firebaseConfig) {
   firebaseConfig = {
-    // ↓↓↓ 高橋さんの合鍵を入力済みです。そのまま使えます！ ↓↓↓
     apiKey: "AIzaSyD_0rHXb4wH9qQMtnTPdjoPapLijt0Zc8E",
     authDomain: "lantana-cafe-app.firebaseapp.com",
     projectId: "lantana-cafe-app",
     storageBucket: "lantana-cafe-app.firebasestorage.app",
     messagingSenderId: "723885922436",
     appId: "1:723885922436:web:0714741658799d30138ad1",
-    // ↑↑↑ ここまで ↑↑↑
   };
 }
 
@@ -81,7 +80,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// --- Initial Data for Migration ---
+// --- Initial Data ---
 const INITIAL_MENU_ITEMS = [
   {
     name: "牛スジと野菜ピュレのカレー",
@@ -227,6 +226,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("pos");
   const [staffName, setStaffName] = useState("高橋");
   const [expandedDate, setExpandedDate] = useState(null);
+  const [permissionError, setPermissionError] = useState(false);
 
   // Tailwind Loading
   useEffect(() => {
@@ -261,14 +261,7 @@ export default function App() {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (
-          typeof __initial_auth_token !== "undefined" &&
-          __initial_auth_token
-        ) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
+        await signInAnonymously(auth);
       } catch (err) {
         console.error("Auth Error:", err);
         setAuthError(err.message);
@@ -285,52 +278,87 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
 
-    // Fetch Menu Items (Sorted by Newest First)
+    const handleError = (err) => {
+      console.error("Snapshot Error:", err);
+      if (err.code === "permission-denied") {
+        setPermissionError(true);
+      }
+    };
+
+    // Fetch Menu Items
     const qMenu = query(
       collection(db, "artifacts", appId, "public", "data", "menu_items"),
       orderBy("createdAt", "desc")
     );
-    const unsubMenu = onSnapshot(qMenu, async (snapshot) => {
-      // Data Migration
-      if (snapshot.empty) {
-        const batch = writeBatch(db);
-        INITIAL_MENU_ITEMS.forEach((item) => {
-          const docRef = doc(
-            collection(db, "artifacts", appId, "public", "data", "menu_items")
+    const unsubMenu = onSnapshot(
+      qMenu,
+      async (snapshot) => {
+        if (snapshot.empty) {
+          try {
+            const batch = writeBatch(db);
+            INITIAL_MENU_ITEMS.forEach((item) => {
+              const docRef = doc(
+                collection(
+                  db,
+                  "artifacts",
+                  appId,
+                  "public",
+                  "data",
+                  "menu_items"
+                )
+              );
+              batch.set(docRef, { ...item, createdAt: serverTimestamp() });
+            });
+            await batch.commit();
+          } catch (e) {
+            console.log("Init migration skipped");
+          }
+        } else {
+          setMenuItems(
+            snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
           );
-          batch.set(docRef, { ...item, createdAt: serverTimestamp() });
-        });
-        await batch.commit();
-      } else {
-        setMenuItems(
-          snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-        );
-      }
-    });
+        }
+      },
+      handleError
+    );
 
     const qOrders = query(
       collection(db, "artifacts", appId, "public", "data", "orders"),
       orderBy("createdAt", "desc")
     );
-    const unsubOrders = onSnapshot(qOrders, (snapshot) => {
-      setOrders(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-    });
+    const unsubOrders = onSnapshot(
+      qOrders,
+      (snapshot) => {
+        setOrders(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+      },
+      handleError
+    );
 
     const qExpenses = query(
       collection(db, "artifacts", appId, "public", "data", "expenses"),
       orderBy("date", "desc")
     );
-    const unsubExpenses = onSnapshot(qExpenses, (snapshot) => {
-      setExpenses(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-    });
+    const unsubExpenses = onSnapshot(
+      qExpenses,
+      (snapshot) => {
+        setExpenses(
+          snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+        );
+      },
+      handleError
+    );
 
     const qReports = query(
       collection(db, "artifacts", appId, "public", "data", "reports"),
       orderBy("date", "desc")
     );
-    const unsubReports = onSnapshot(qReports, (snapshot) => {
-      setReports(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-    });
+    const unsubReports = onSnapshot(
+      qReports,
+      (snapshot) => {
+        setReports(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+      },
+      handleError
+    );
 
     return () => {
       unsubMenu();
@@ -339,6 +367,35 @@ export default function App() {
       unsubReports();
     };
   }, [user]);
+
+  // --- Deletion Logic ---
+  const deleteOrder = async (orderId) => {
+    if (
+      confirm(
+        "この注文記録を削除してもよろしいですか？\n売上から差し引かれます。"
+      )
+    ) {
+      try {
+        await deleteDoc(
+          doc(db, "artifacts", appId, "public", "data", "orders", orderId)
+        );
+      } catch (err) {
+        alert("削除に失敗しました: 権限がありません");
+      }
+    }
+  };
+
+  const deleteExpense = async (expenseId) => {
+    if (confirm("この経費記録を削除してもよろしいですか？")) {
+      try {
+        await deleteDoc(
+          doc(db, "artifacts", appId, "public", "data", "expenses", expenseId)
+        );
+      } catch (err) {
+        alert("削除に失敗しました: 権限がありません");
+      }
+    }
+  };
 
   // --- Logic: Menu Management ---
   const saveMenuItem = async (e) => {
@@ -385,10 +442,7 @@ export default function App() {
       } else {
         await addDoc(
           collection(db, "artifacts", appId, "public", "data", "menu_items"),
-          {
-            ...data,
-            createdAt: serverTimestamp(),
-          }
+          { ...data, createdAt: serverTimestamp() }
         );
       }
       setEditingMenu(null);
@@ -430,7 +484,6 @@ export default function App() {
 
   const handleCheckout = async () => {
     if (cart.length === 0 || !user) return;
-
     const orderData = {
       items: cart,
       total: calculateTotal(),
@@ -439,7 +492,6 @@ export default function App() {
       staff: staffName,
       status: "completed",
     };
-
     try {
       await addDoc(
         collection(db, "artifacts", appId, "public", "data", "orders"),
@@ -448,7 +500,6 @@ export default function App() {
       setCart([]);
       setIsCheckoutModalOpen(false);
     } catch (error) {
-      console.error("Error saving order:", error);
       alert("保存に失敗しました: " + error.message);
     }
   };
@@ -508,6 +559,11 @@ export default function App() {
   // --- Logic: Aggregation ---
   const getAggregatedData = () => {
     const dataByDate = {};
+
+    // 集計用の変数
+    let totalSalesAll = 0;
+    let totalExpensesAll = 0;
+
     orders.forEach((order) => {
       const d = order.date;
       if (!dataByDate[d])
@@ -517,13 +573,19 @@ export default function App() {
           expenses: 0,
           takahashiPay: 0,
           hamadaPay: 0,
+          lantanaPay: 0,
           cashPay: 0,
           itemCounts: {},
           orderCount: 0,
           expenseDetails: [],
+          rawOrders: [],
         };
+
       dataByDate[d].sales += order.total;
+      totalSalesAll += order.total;
       dataByDate[d].orderCount += 1;
+      dataByDate[d].rawOrders.push(order); // 個別の注文記録も保存（削除用）
+
       if (order.items)
         order.items.forEach((item) => {
           const key =
@@ -539,6 +601,7 @@ export default function App() {
           dataByDate[d].itemCounts[key].amount += item.price;
         });
     });
+
     expenses.forEach((exp) => {
       const d = exp.date;
       if (!dataByDate[d])
@@ -548,23 +611,49 @@ export default function App() {
           expenses: 0,
           takahashiPay: 0,
           hamadaPay: 0,
+          lantanaPay: 0,
           cashPay: 0,
           itemCounts: {},
           orderCount: 0,
           expenseDetails: [],
+          rawOrders: [],
         };
+
       dataByDate[d].expenses += exp.amount;
+      totalExpensesAll += exp.amount;
       dataByDate[d].expenseDetails.push(exp);
+
       if (exp.payer === "高橋") dataByDate[d].takahashiPay += exp.amount;
       if (exp.payer === "浜田") dataByDate[d].hamadaPay += exp.amount;
+      if (exp.payer === "ランタナ") dataByDate[d].lantanaPay += exp.amount;
     });
-    return Object.values(dataByDate).sort((a, b) =>
+
+    const sortedData = Object.values(dataByDate).sort((a, b) =>
       b.date.localeCompare(a.date)
     );
-  };
-  const aggregatedData = useMemo(() => getAggregatedData(), [orders, expenses]);
 
-  // --- Render Functions (Complete) ---
+    // 給料計算
+    const profit = totalSalesAll - totalExpensesAll;
+    // 利益がプラスのときだけ給料計算する（赤字なら0）
+    const baseProfit = profit > 0 ? profit : 0;
+    const salaryPerPerson = Math.floor(baseProfit / 2);
+    const lantanaSavings = profit - salaryPerPerson * 2; // 余りはランタナ貯金
+
+    return {
+      daily: sortedData,
+      summary: {
+        totalSales: totalSalesAll,
+        totalExpenses: totalExpensesAll,
+        profit,
+        salaryPerPerson,
+        lantanaSavings,
+      },
+    };
+  };
+
+  const aggregated = useMemo(() => getAggregatedData(), [orders, expenses]);
+
+  // --- Render Functions ---
 
   const renderExpenses = () => (
     <div className="max-w-2xl mx-auto space-y-6 pb-20">
@@ -602,6 +691,9 @@ export default function App() {
                 }
                 className="w-full p-2 border border-stone-300 rounded-lg font-mono text-right"
               />
+              <p className="text-[10px] text-stone-400 text-right mt-1">
+                ※返金の場合はマイナスを入力
+              </p>
             </div>
           </div>
 
@@ -609,8 +701,8 @@ export default function App() {
             <label className="block text-xs font-bold text-stone-500 mb-1">
               支払った人（財布）
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              {["高橋", "浜田"].map((p) => (
+            <div className="grid grid-cols-3 gap-2">
+              {["高橋", "浜田", "ランタナ"].map((p) => (
                 <button
                   type="button"
                   key={p}
@@ -652,7 +744,7 @@ export default function App() {
             </label>
             <input
               type="text"
-              placeholder="例：玉ねぎ、洗剤など"
+              placeholder="例：米、返金など"
               value={expenseForm.item}
               onChange={(e) =>
                 setExpenseForm({ ...expenseForm, item: e.target.value })
@@ -682,7 +774,11 @@ export default function App() {
                 {exp.date} / {exp.payer}払
               </div>
             </div>
-            <div className="font-mono font-bold text-stone-600">
+            <div
+              className={`font-mono font-bold ${
+                exp.amount < 0 ? "text-blue-600" : "text-stone-600"
+              }`}
+            >
               ¥{Number(exp.amount).toLocaleString()}
             </div>
           </div>
@@ -735,7 +831,6 @@ export default function App() {
               </div>
             </div>
           </div>
-
           <div>
             <label className="block text-xs font-bold text-stone-500 mb-1">
               来店数（組/人）
@@ -750,7 +845,6 @@ export default function App() {
               placeholder="人数を入力"
             />
           </div>
-
           <div>
             <label className="block text-xs font-bold text-stone-500 mb-1">
               業務メモ・日記
@@ -764,7 +858,6 @@ export default function App() {
               placeholder="試作の感想、お客様の様子など..."
             />
           </div>
-
           <Button type="submit" className="w-full">
             日報を保存
           </Button>
@@ -776,10 +869,57 @@ export default function App() {
   const renderHistory = () => (
     <div className="space-y-4 pb-20">
       <h2 className="text-xl font-bold text-stone-700 mb-4 flex items-center gap-2">
-        <History className="text-orange-600" /> 帳簿（売上・経費集計）
+        <History className="text-orange-600" /> 帳簿（売上・経費・給料）
       </h2>
 
-      {/* Simulating the Notebook Table */}
+      {/* Salary Summary Card */}
+      <div className="bg-gradient-to-br from-orange-50 to-amber-50 border border-orange-100 rounded-xl p-4 shadow-sm">
+        <h3 className="font-bold text-orange-800 mb-3 flex items-center gap-2 text-sm border-b border-orange-200 pb-2">
+          <Wallet size={18} /> 今月の給料計算 (表示中の全期間)
+        </h3>
+        <div className="grid grid-cols-2 gap-4 mb-3">
+          <div className="bg-white p-3 rounded-lg border border-orange-100">
+            <p className="text-xs text-stone-500 mb-1">売上合計</p>
+            <p className="font-mono font-bold text-lg">
+              ¥{aggregated.summary.totalSales.toLocaleString()}
+            </p>
+          </div>
+          <div className="bg-white p-3 rounded-lg border border-orange-100">
+            <p className="text-xs text-stone-500 mb-1">経費合計</p>
+            <p className="font-mono font-bold text-lg text-red-500">
+              -¥{aggregated.summary.totalExpenses.toLocaleString()}
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-xl border-2 border-orange-200 shadow-sm relative overflow-hidden">
+          <div className="absolute top-0 right-0 bg-orange-100 text-orange-700 text-[10px] font-bold px-2 py-1 rounded-bl-lg">
+            利益÷2
+          </div>
+          <div className="flex justify-between items-end mb-2">
+            <div className="flex items-center gap-2">
+              <User size={18} className="text-orange-600" />
+              <span className="font-bold text-stone-700">高橋・浜田 給料</span>
+            </div>
+            <span className="font-mono text-2xl font-bold text-orange-600">
+              ¥{aggregated.summary.salaryPerPerson.toLocaleString()}
+              <span className="text-sm text-stone-400 font-normal ml-1">
+                /人
+              </span>
+            </span>
+          </div>
+          <div className="border-t border-dashed border-stone-200 pt-2 flex justify-between items-center text-sm">
+            <span className="flex items-center gap-1 text-stone-500">
+              <PiggyBank size={14} /> ランタナ貯金 (端数)
+            </span>
+            <span className="font-mono font-bold text-stone-700">
+              ¥{aggregated.summary.lantanaSavings.toLocaleString()}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* History Table */}
       <div className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
@@ -788,22 +928,23 @@ export default function App() {
                 <th className="p-3 whitespace-nowrap">日付</th>
                 <th className="p-3 whitespace-nowrap text-right">売上</th>
                 <th className="p-3 whitespace-nowrap text-right text-orange-700">
-                  高橋払
+                  高
                 </th>
                 <th className="p-3 whitespace-nowrap text-right text-blue-700">
-                  浜田払
+                  浜
                 </th>
-                <th className="p-3 whitespace-nowrap text-right">経費計</th>
+                <th className="p-3 whitespace-nowrap text-right text-green-700">
+                  店
+                </th>
                 <th className="p-3 whitespace-nowrap text-right font-bold">
                   収支
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100">
-              {aggregatedData.map((row) => {
+              {aggregated.daily.map((row) => {
                 const profit = row.sales - row.expenses;
                 const isExpanded = expandedDate === row.date;
-
                 return (
                   <React.Fragment key={row.date}>
                     <tr
@@ -835,8 +976,10 @@ export default function App() {
                           ? `¥${row.hamadaPay.toLocaleString()}`
                           : "-"}
                       </td>
-                      <td className="p-3 text-right font-mono text-stone-400">
-                        ¥{row.expenses.toLocaleString()}
+                      <td className="p-3 text-right font-mono text-green-700">
+                        {row.lantanaPay !== 0
+                          ? `¥${row.lantanaPay.toLocaleString()}`
+                          : "-"}
                       </td>
                       <td
                         className={`p-3 text-right font-mono font-bold ${
@@ -849,96 +992,102 @@ export default function App() {
                     {isExpanded && (
                       <tr className="bg-stone-50">
                         <td colSpan={6} className="p-4">
-                          <div className="bg-white rounded-lg border border-stone-200 p-4">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                              {/* Sales Breakdown */}
-                              <div>
-                                <h4 className="font-bold text-stone-700 mb-3 flex items-center gap-2 text-sm border-b border-stone-100 pb-2">
-                                  <Receipt
-                                    size={16}
-                                    className="text-orange-500"
-                                  />{" "}
-                                  本日の販売内訳
-                                </h4>
-                                {Object.keys(row.itemCounts).length === 0 ? (
-                                  <p className="text-stone-400 text-xs">
-                                    データなし
-                                  </p>
-                                ) : (
-                                  <div className="space-y-2">
-                                    {Object.entries(row.itemCounts)
-                                      .sort(([, a], [, b]) => b.count - a.count)
-                                      .map(([name, data]) => (
-                                        <div
-                                          key={name}
-                                          className="flex justify-between items-center text-sm border-b border-stone-100 pb-1 border-dashed last:border-0"
+                          <div className="bg-white rounded-lg border border-stone-200 p-4 space-y-6">
+                            {/* Detailed Expenses with Delete */}
+                            <div>
+                              <h4 className="font-bold text-stone-700 mb-2 flex items-center gap-2 text-sm border-b pb-1">
+                                <DollarSign
+                                  size={16}
+                                  className="text-red-500"
+                                />{" "}
+                                経費明細・訂正
+                              </h4>
+                              {row.expenseDetails.length === 0 ? (
+                                <p className="text-stone-400 text-xs">なし</p>
+                              ) : (
+                                <div className="space-y-1">
+                                  {row.expenseDetails.map((exp, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="flex justify-between items-center text-sm p-2 bg-stone-50 rounded"
+                                    >
+                                      <div className="flex gap-2 items-center">
+                                        <span
+                                          className={`text-[10px] px-1.5 rounded text-white font-bold ${
+                                            exp.payer === "高橋"
+                                              ? "bg-orange-400"
+                                              : exp.payer === "浜田"
+                                              ? "bg-blue-400"
+                                              : "bg-green-500"
+                                          }`}
                                         >
-                                          <span className="text-stone-600">
-                                            {name}
-                                            {data.isTakeout && (
-                                              <span className="text-[10px] ml-2 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full">
-                                                Takeout
-                                              </span>
-                                            )}
-                                          </span>
-                                          <div className="flex gap-4">
-                                            <span className="font-bold text-stone-800">
-                                              x{data.count}
-                                            </span>
-                                            <span className="font-mono text-stone-400 w-16 text-right">
-                                              ¥{data.amount.toLocaleString()}
-                                            </span>
-                                          </div>
-                                        </div>
-                                      ))}
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Expenses Breakdown */}
-                              <div>
-                                <h4 className="font-bold text-stone-700 mb-3 flex items-center gap-2 text-sm border-b border-stone-100 pb-2">
-                                  <DollarSign
-                                    size={16}
-                                    className="text-red-500"
-                                  />{" "}
-                                  本日の経費詳細
-                                </h4>
-                                {row.expenseDetails.length === 0 ? (
-                                  <p className="text-stone-400 text-xs">
-                                    経費なし
-                                  </p>
-                                ) : (
-                                  <div className="space-y-2">
-                                    {row.expenseDetails.map((exp, idx) => (
-                                      <div
-                                        key={idx}
-                                        className="flex justify-between items-center text-sm border-b border-stone-100 pb-1 border-dashed last:border-0"
-                                      >
-                                        <div className="flex gap-2 items-center">
-                                          <span
-                                            className={`text-[10px] px-1.5 rounded text-white font-bold ${
-                                              exp.payer === "高橋"
-                                                ? "bg-orange-400"
-                                                : exp.payer === "浜田"
-                                                ? "bg-blue-400"
-                                                : "bg-stone-400"
-                                            }`}
-                                          >
-                                            {exp.payer.charAt(0)}
-                                          </span>
-                                          <span className="text-stone-600">
-                                            {exp.item || exp.category}
-                                          </span>
-                                        </div>
+                                          {exp.payer.charAt(0)}
+                                        </span>
+                                        <span className="text-stone-600">
+                                          {exp.item || exp.category}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-3">
                                         <span className="font-mono text-stone-600">
                                           ¥{exp.amount.toLocaleString()}
                                         </span>
+                                        <button
+                                          onClick={() => deleteExpense(exp.id)}
+                                          className="text-stone-400 hover:text-red-600"
+                                        >
+                                          <Trash2 size={14} />
+                                        </button>
                                       </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Detailed Orders with Delete */}
+                            <div>
+                              <h4 className="font-bold text-stone-700 mb-2 flex items-center gap-2 text-sm border-b pb-1">
+                                <Receipt
+                                  size={16}
+                                  className="text-orange-500"
+                                />{" "}
+                                売上明細・訂正
+                              </h4>
+                              {row.rawOrders.length === 0 ? (
+                                <p className="text-stone-400 text-xs">なし</p>
+                              ) : (
+                                <div className="space-y-1">
+                                  {row.rawOrders.map((order, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="flex justify-between items-center text-sm p-2 bg-stone-50 rounded"
+                                    >
+                                      <div className="text-stone-600 text-xs">
+                                        {new Date(
+                                          order.createdAt?.seconds * 1000
+                                        ).toLocaleTimeString("ja-JP", {
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                        })}
+                                        <span className="ml-2">
+                                          ({order.items?.length || 0}点)
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-3">
+                                        <span className="font-mono font-bold text-stone-700">
+                                          ¥{order.total.toLocaleString()}
+                                        </span>
+                                        <button
+                                          onClick={() => deleteOrder(order.id)}
+                                          className="text-stone-400 hover:text-red-600"
+                                        >
+                                          <Trash2 size={14} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </td>
@@ -947,7 +1096,7 @@ export default function App() {
                   </React.Fragment>
                 );
               })}
-              {aggregatedData.length === 0 && (
+              {aggregated.daily.length === 0 && (
                 <tr>
                   <td colSpan={6} className="p-8 text-center text-stone-400">
                     データがありません
@@ -957,17 +1106,6 @@ export default function App() {
             </tbody>
           </table>
         </div>
-      </div>
-
-      <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 mt-4">
-        <h3 className="font-bold text-orange-800 mb-2 text-sm">
-          💡 使い方メモ
-        </h3>
-        <p className="text-xs text-orange-700 leading-relaxed">
-          ・表の「日付」の部分をタップすると、内訳（売上メニューと経費の詳細）がパカッと開きます。
-          <br />
-          ・経費の横にあるオレンジの「高」や青い「浜」マークで、誰が支払ったかも一目で分かります。
-        </p>
       </div>
     </div>
   );
@@ -979,7 +1117,6 @@ export default function App() {
           <Utensils className="text-orange-600" /> メニュー
         </h2>
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-          {/* New items first due to sort order */}
           {menuItems.map((item) => (
             <button
               key={item.id}
@@ -1012,7 +1149,6 @@ export default function App() {
           </button>
         </div>
       </div>
-      {/* Sidebar Cart */}
       <div className="md:w-80 bg-stone-50 border-t md:border-l border-stone-200 flex flex-col h-1/3 md:h-full fixed bottom-0 left-0 right-0 md:relative z-10 shadow-xl md:shadow-none">
         <div className="p-4 bg-orange-600 text-white flex justify-between items-center">
           <span className="font-bold flex items-center gap-2">
@@ -1077,8 +1213,6 @@ export default function App() {
           </Button>
         </div>
       </div>
-
-      {/* Options Modal */}
       {selectedItem && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
@@ -1184,8 +1318,6 @@ export default function App() {
           </div>
         </div>
       )}
-
-      {/* Checkout Modal */}
       {isCheckoutModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center space-y-6">
@@ -1268,7 +1400,6 @@ export default function App() {
           </div>
         ))}
       </div>
-
       {editingMenu && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-xl animate-in fade-in zoom-in duration-200 h-[90vh] flex flex-col">
@@ -1328,7 +1459,7 @@ export default function App() {
                     className="w-full p-2 border rounded-lg bg-white"
                     onChange={(e) =>
                       setEditingMenu({ ...editingMenu, type: e.target.value })
-                    } // Force update to show/hide fields
+                    }
                   >
                     <option value="food">食事</option>
                     <option value="drink">ドリンク</option>
@@ -1336,7 +1467,6 @@ export default function App() {
                   </select>
                 </div>
               </div>
-
               <div className="space-y-4 pt-2 border-t border-stone-100">
                 <label className="flex items-center gap-2 text-sm text-stone-700 cursor-pointer font-bold">
                   <input
@@ -1353,8 +1483,6 @@ export default function App() {
                   />
                   セット販売を有効にする
                 </label>
-
-                {/* Dynamic Price Inputs for Sets */}
                 {(editingMenu.hasSets || !editingMenu.id) &&
                   (editingMenu.type === "food" || !editingMenu.type) && (
                     <div className="pl-6 space-y-3 bg-stone-50 p-3 rounded-lg">
@@ -1394,7 +1522,6 @@ export default function App() {
                       </div>
                     </div>
                   )}
-
                 {(editingMenu.hasSets || !editingMenu.id) &&
                   editingMenu.type === "dessert" && (
                     <div className="pl-6 bg-pink-50 p-3 rounded-lg">
@@ -1412,7 +1539,6 @@ export default function App() {
                       />
                     </div>
                   )}
-
                 <label className="flex items-center gap-2 text-sm text-stone-700 cursor-pointer pt-2">
                   <input
                     type="checkbox"
@@ -1423,7 +1549,6 @@ export default function App() {
                   テイクアウト可能にする
                 </label>
               </div>
-
               <div className="pt-4 flex gap-3 shrink-0">
                 <Button
                   variant="secondary"
@@ -1455,6 +1580,29 @@ export default function App() {
             <br />
             「匿名ログイン」が有効になっているか確認してください。
           </p>
+        </div>
+      </div>
+    );
+
+  // 権限エラー時のヘルプ画面
+  if (permissionError)
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-stone-50 p-6 text-center">
+        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-red-100">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Lock size={32} className="text-red-500" />
+          </div>
+          <h2 className="font-bold text-xl text-stone-800 mb-2">
+            データベースの鍵がかかっています
+          </h2>
+          <p className="text-stone-500 text-sm mb-6">
+            Firebaseのセキュリティルールを再設定し、
+            <br />
+            アプリを再起動してください。
+          </p>
+          <Button onClick={() => window.location.reload()} className="w-full">
+            <RefreshCw size={18} /> 再読み込み
+          </Button>
         </div>
       </div>
     );

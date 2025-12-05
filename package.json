@@ -1,7 +1,8 @@
 {
   "name": "lantana-cafe-app",
   "version": "1.0.0",
-  "private": true,
+  "description": "Cafe Management App",
+  "main": "src/index.js",
   "dependencies": {
     "firebase": "10.8.0",
     "lucide-react": "0.344.0",
